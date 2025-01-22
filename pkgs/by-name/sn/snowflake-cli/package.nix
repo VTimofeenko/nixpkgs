@@ -8,14 +8,14 @@
 
 python3Packages.buildPythonApplication rec {
   pname = "snowflake-cli";
-  version = "3.2.2";
+  version = "3.3.0";
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "snowflakedb";
     repo = "snowflake-cli";
     tag = "v${version}";
-    hash = "sha256-1AXp2bCBNuYwnyQMIQn3uLLKdWVznBRK6HcB/E7Yjo8=";
+    hash = "sha256-nYP9FNeZi/ziW/ROKgpybdBmAIX5fFICvRApD680DQg=";
   };
 
   build-system = with python3Packages; [
@@ -38,7 +38,35 @@ python3Packages.buildPythonApplication rec {
     typer
     urllib3
     gitpython
-    pydantic
+    # `snowflake-cli` needs pydantic == 2.9.2. This override pins the version of pydantic.
+    # Upstream PR to bump pydantic: https://github.com/snowflakedb/snowflake-cli/pull/1965
+    (pydantic.overridePythonAttrs rec {
+      version = "2.9.2";
+      src = fetchFromGitHub {
+        owner = "pydantic";
+        repo = "pydantic";
+        tag = "v${version}";
+        hash = "sha256-Eb/9k9bNizRyGhjbW/LAE/2R0Ino4DIRDy5ZrQuzJ7o=";
+      };
+      dependencies = [
+        annotated-types
+        typing-extensions
+        (pydantic-core.overrideAttrs (old: rec {
+          version = "2.23.4";
+          src = pkgs.fetchFromGitHub {
+            owner = "pydantic";
+            repo = "pydantic-core";
+            tag = "v${version}";
+            hash = "sha256-WSSwiqmdQN4zB7fqaniHyh4SHmrGeDHdCGpiSJZT7Mg=";
+          };
+          cargoDeps = old.cargoDeps.overrideAttrs {
+            name = "pydantic-core-${version}.tar.gz";
+            inherit src;
+            outputHash = "sha256-Ya591IbP/jzkVS3N61S8v6vLfWAh/Fqk9NtrCz+ZlDw=";
+          };
+        }))
+      ];
+    })
     snowflake-connector-python
   ];
 
@@ -66,6 +94,7 @@ python3Packages.buildPythonApplication rec {
     "test_help_message" # Snapshot needs update?
     "test_executing_command_sends_telemetry_usage_data" # Fails on mocked version
     "test_generate_jwt_with_passphrase" # Fails, upstream PR https://github.com/snowflakedb/snowflake-cli/pull/1898
+    "test_internal_application_data_is_sent_if_feature_flag_is_set"
   ];
 
   pythonRelaxDeps = true;
@@ -104,5 +133,9 @@ python3Packages.buildPythonApplication rec {
     license = lib.licenses.asl20;
     maintainers = with lib.maintainers; [ vtimofeenko ];
     mainProgram = "snow";
+    # Broken because of incompatible pydantic in nixpkgs.
+    # Upstream PR:
+    # https://github.com/snowflakedb/snowflake-cli/pull/1965
+    # broken = true;
   };
 }

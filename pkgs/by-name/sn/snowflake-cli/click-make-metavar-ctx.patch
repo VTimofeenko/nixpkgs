@@ -1,0 +1,85 @@
+click 8.2 made click.Parameter.make_metavar() require a `ctx: Context` argument
+(it was previously argument-less). snowflake-cli's docs generator and its
+Jinja2 templates call `param.make_metavar()` with no arguments, which crashes
+under nixpkgs' click (>=8.2). Upstream pins click==8.1.8 exactly, so this
+hasn't been fixed there. This patch threads a `click.Context` through to the
+templates so `make_metavar()` can be called with it.
+diff --git a/src/snowflake/cli/_app/dev/docs/commands_docs_generator.py b/src/snowflake/cli/_app/dev/docs/commands_docs_generator.py
+index 5d40f233..4fbbbebe 100644
+--- a/src/snowflake/cli/_app/dev/docs/commands_docs_generator.py
++++ b/src/snowflake/cli/_app/dev/docs/commands_docs_generator.py
+@@ -17,7 +17,7 @@ from __future__ import annotations
+ import logging
+ from typing import Any, List, Optional
+
+-from click import Command
++from click import Command, Context
+ from snowflake.cli._app.dev.docs.template_utils import get_template_environment
+ from snowflake.cli.api.secure_path import SecurePath
+ from typer.core import TyperArgument
+@@ -92,6 +92,7 @@ def _render_command_usage(
+         "options": options,
+         "arguments": arguments,
+         "path": path,
++        "ctx": Context(command),
+     }
+     with file_path.open("w+") as fh:
+         fh.write(template.render(command_help_params | template_params))
+diff --git a/src/snowflake/cli/_app/dev/docs/templates/_macros.mdx.jinja2 b/src/snowflake/cli/_app/dev/docs/templates/_macros.mdx.jinja2
+index 2820e6f1..497c38d9 100644
+--- a/src/snowflake/cli/_app/dev/docs/templates/_macros.mdx.jinja2
++++ b/src/snowflake/cli/_app/dev/docs/templates/_macros.mdx.jinja2
+@@ -1,4 +1,4 @@
+-{%- macro render_option_list(params, show_default=true) -%}
++{%- macro render_option_list(params, ctx, show_default=true) -%}
+ <dl>
+ {%- for param in params if not param.hidden %}
+ {%- if param.is_flag %}
+@@ -8,10 +8,10 @@
+ `</dt>
+ {%- elif param.type.name == "choice" %}
+ <dt>`
+-    {%- for p in param.opts %}{{ p }}{{ ", " if not loop.last }}{% endfor %} {{ param.make_metavar() }}`</dt>
++    {%- for p in param.opts %}{{ p }}{{ ", " if not loop.last }}{% endfor %} {{ param.make_metavar(ctx) }}`</dt>
+ {%- else %}
+ <dt><code className="samp">
+-    {%- for p in param.opts %}{{ p }}{{ ", " if not loop.last }}{% endfor %} <em>{{ param.make_metavar() }}</em></code></dt>
++    {%- for p in param.opts %}{{ p }}{{ ", " if not loop.last }}{% endfor %} <em>{{ param.make_metavar(ctx) }}</em></code></dt>
+ {%- endif %}
+ <dd>
+
+diff --git a/src/snowflake/cli/_app/dev/docs/templates/overview.mdx.jinja2 b/src/snowflake/cli/_app/dev/docs/templates/overview.mdx.jinja2
+index eb689d67..f50523aa 100644
+--- a/src/snowflake/cli/_app/dev/docs/templates/overview.mdx.jinja2
++++ b/src/snowflake/cli/_app/dev/docs/templates/overview.mdx.jinja2
+@@ -4,4 +4,4 @@
+
+ ## Global options
+
+-{{ render_option_list(options, show_default=false) }}
++{{ render_option_list(options, ctx, show_default=false) }}
+diff --git a/src/snowflake/cli/_app/dev/docs/templates/usage.mdx.jinja2 b/src/snowflake/cli/_app/dev/docs/templates/usage.mdx.jinja2
+index b8508782..39e547bf 100644
+--- a/src/snowflake/cli/_app/dev/docs/templates/usage.mdx.jinja2
++++ b/src/snowflake/cli/_app/dev/docs/templates/usage.mdx.jinja2
+@@ -22,9 +22,9 @@ snow {% for part in path %}{{ part }}{{ " " if not loop.last }}{% endfor %}
+ {%- for param in arguments %}
+ <dt><code className="samp"><em>
+     {%- if param.required -%}
+-        {{ param.make_metavar().lower() }}
++        {{ param.make_metavar(ctx).lower() }}
+     {%- else -%}
+-        {{ param.make_metavar().replace("[", "").replace("]", "").lower() }}
++        {{ param.make_metavar(ctx).replace("[", "").replace("]", "").lower() }}
+     {%- endif -%}
+ </em></code></dt>
+ <dd>
+@@ -45,7 +45,7 @@ None
+
+ {%- if options %}
+
+-{{ render_option_list(options) }}
++{{ render_option_list(options, ctx) }}
+ {% else %}
+
+ None

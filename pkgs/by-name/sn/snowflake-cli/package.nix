@@ -99,7 +99,14 @@ python3Packages.buildPythonApplication (finalAttrs: {
     # It's invoking `pip` as `python -m pip`, so `pip` needs to be in
     # dependencies.
     pip
-  ];
+  ]
+  # Upstream pins `snowflake-connector-python[secure-local-storage]`. Without
+  # this, snowflake-connector-python's TokenCache silently falls back to
+  # NoopTokenCache on macOS (it needs `keyring` for Keychain access there;
+  # Linux instead uses a plain file cache and doesn't need this at all), so
+  # SSO/MFA tokens never get cached and every `snow` invocation re-triggers a
+  # SAML browser login.
+  ++ python3Packages.snowflake-connector-python.optional-dependencies.secure-local-storage;
 
   # As of `snowflake-cli` version 3.23.0:
   # `snowflake-snowpark-python` is only ever imported lazily by a handful of
@@ -165,6 +172,13 @@ python3Packages.buildPythonApplication (finalAttrs: {
     "test_parse_source_url"
     "test_recursion_from_url"
     "test_source_missing_url"
+    # The error is rendered through a rich panel that word-wraps the long
+    # temp-dir path; macOS's default pytest tmp dirs
+    # (/private/var/folders/.../pytest-of-.../...) are long enough that the
+    # wrap point lands inside "does not exist" itself, splitting the string
+    # this test asserts on. Linux's shorter /tmp/pytest-... paths don't hit
+    # this.
+    "test_output_file_missing_parent_raises"
   ];
 
   disabledTestPaths = [

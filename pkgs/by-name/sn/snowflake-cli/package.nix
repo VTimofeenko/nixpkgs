@@ -6,6 +6,54 @@
   stdenv,
 }:
 
+let
+  # Upstream pins click==8.1.8 and typer==0.17.3 exactly. click 8.2 changed
+  # `click.prompt()` (and thus `typer.prompt()`) so that reaching EOF on
+  # stdin while a `default` is set now raises Abort instead of returning the
+  # default, and also made `Parameter.make_metavar()` require a `ctx`
+  # argument. Both are real behavior regressions for snowflake-cli: `snow
+  # connection add` interactively prompts (with defaults) for any field not
+  # passed as a flag, and its docs generator calls `make_metavar()` with no
+  # arguments. nixpkgs' current typer (0.25.1) itself requires
+  # click>=8.2.1, so click has to be pinned together with typer -- pin both
+  # back to what upstream actually tests against instead of patching around
+  # each individual symptom.
+  #
+  # These are standalone local bindings (not a whole-scope overrideScope)
+  # since nothing else in this package's dependency closure needs click --
+  # only typer does -- so there's no risk of two click versions colliding,
+  # and the rest of the shared python package set (snowflake-connector-python
+  # and its own large dependency tree) is left alone and still comes from
+  # the binary cache.
+  click_8_1 = python3Packages.click.overridePythonAttrs (_old: rec {
+    version = "8.1.8";
+    src = python3Packages.click.src.override {
+      tag = version;
+      hash = "sha256-pAAqf8jZbDfVZUoltwIFpov/1ys6HSYMyw3WV2qcE/M=";
+    };
+  });
+  typer_0_17 = python3Packages.typer.overridePythonAttrs (_old: rec {
+    version = "0.17.3";
+    src = python3Packages.typer.src.override {
+      tag = version;
+      hash = "sha256-ir4RL1Cdq0ENr0ojiJvrdFaZHb4bF8q4rLcKeowliR0=";
+    };
+    # 0.17.3 doesn't use pdm's `annotated-doc` extra; drop the
+    # postPatch coverage-args sed too since its tests dir layout differs
+    postPatch = null;
+    dependencies = with python3Packages; [
+      click_8_1
+      rich
+      shellingham
+      typing-extensions
+    ];
+    # Old test suite layout doesn't match nixpkgs' current
+    # nativeCheckInputs/disabledTests for typer; we only need this
+    # pin to satisfy snowflake-cli's own runtime, not to validate
+    # typer 0.17.3 itself.
+    doCheck = false;
+  });
+in
 python3Packages.buildPythonApplication (finalAttrs: {
   pname = "snowflake-cli";
   version = "3.23.0";
@@ -22,10 +70,6 @@ python3Packages.buildPythonApplication (finalAttrs: {
     hatchling
   ];
 
-  patches = [
-    ./click-make-metavar-ctx.patch
-  ];
-
   nativeBuildInputs = [ installShellFiles ];
 
   dependencies = with python3Packages; [
@@ -38,7 +82,7 @@ python3Packages.buildPythonApplication (finalAttrs: {
     requirements-parser
     setuptools
     tomlkit
-    typer
+    typer_0_17
     urllib3
     gitpython
     pydantic
@@ -124,61 +168,21 @@ python3Packages.buildPythonApplication (finalAttrs: {
   ];
 
   disabledTestPaths = [
+    # importlib.metadata.version("snowflake-cli") resolves to a placeholder
+    # ("1.2.3") instead of the real version -- hatch-vcs can't derive a
+    # version from git tags/history since fetchFromGitHub gives a plain
+    # tarball with no `.git` metadata.
     "tests/app/test_version_check.py"
-    "tests/nativeapp/test_sf_sql_facade.py"
     # `snowflake-snowpark-python` is not packaged (see comment on
     # `pythonRemoveDeps`); these tests really do import it
     "tests/stage/test_stage.py::test_execute_with_variables"
     "tests/stage/test_stage.py::test_execute_continue_on_error"
     "tests/stage/test_stage.py::test_execute_stop_on_error"
-    # Tests don't work as of v3.12.0
-    # They either break sandbox by requiring network access or have outdated snapshots
-    "tests/api/commands/test_snow_typer.py::test_enabled_command_is_visible"
-    "tests/api/commands/test_snow_typer.py::test_enabled_command_is_not_visible" # snapshot
-    "tests/auth/test_auth.py::test_rotate" # snapshot
-    "tests/auth/test_auth.py::test_rotate_only_public_key_set" # snapshot
-    "tests/auth/test_auth.py::test_rotate_other_public_key_set_options[KEY-KEY]" # snapshot
-    "tests/auth/test_auth.py::test_rotate_other_public_key_set_options[None-KEY]" # snapshot
-    "tests/auth/test_auth.py::test_rotate_with_password" # snapshot
-    "tests/auth/test_auth.py::test_setup" # snapshot
-    "tests/auth/test_auth.py::test_setup_connection_already_exists" # snapshot
-    "tests/auth/test_auth.py::test_setup_error_if_any_public_key_is_set" # snapshot
-    "tests/auth/test_auth.py::test_setup_overwrite_connection" # snapshot
-    "tests/auth/test_auth.py::test_setup_with_password" # snapshot
-    "tests/stage/test_stage.py::test_stage_create_encryption"
-    "tests/test_connection.py::test_connection_can_be_added_with_existing_paths_in_arguments"
-    "tests/test_connection.py::test_connection_can_be_added_with_existing_paths_in_prompt[10]"
-    "tests/test_connection.py::test_connection_can_be_added_with_existing_paths_in_prompt[11]"
-    "tests/test_connection.py::test_connection_can_be_added_with_existing_paths_in_prompt[9]"
-    "tests/test_connection.py::test_connection_remove_all"
-    "tests/test_connection.py::test_connection_remove_one"
-    "tests/test_connection.py::test_connection_remove_some" # snapshot
-    "tests/test_connection.py::test_fails_if_existing_connection"
-    "tests/test_connection.py::test_file_paths_have_to_exist_when_given_in_arguments[-k]" # sandbox
-    "tests/test_connection.py::test_file_paths_have_to_exist_when_given_in_arguments[-t]"
-    "tests/test_connection.py::test_file_paths_have_to_exist_when_given_in_prompt[10]"
-    "tests/test_connection.py::test_file_paths_have_to_exist_when_given_in_prompt[11]"
-    "tests/test_connection.py::test_file_paths_have_to_exist_when_given_in_prompt[12]"
-    "tests/test_connection.py::test_generate_jwt_with_passphrase[]" # snapshot
-    "tests/test_connection.py::test_if_password_callback_is_called_only_once_from_arguments"
-    "tests/test_connection.py::test_if_password_callback_is_called_only_once_from_prompt"
-    "tests/test_connection.py::test_if_whitespaces_are_stripped_from_connection_name"
-    "tests/test_connection.py::test_new_connection_add_prompt_handles_default_values" # snapshot
-    "tests/test_connection.py::test_new_connection_add_prompt_handles_prompt_override"
-    "tests/test_connection.py::test_new_connection_can_be_added"
-    "tests/test_connection.py::test_new_connection_is_added_to_connections_toml"
-    "tests/test_connection.py::test_new_connection_with_jwt_auth"
-    "tests/test_connection.py::test_port_has_cannot_be_float"
-    "tests/test_connection.py::test_port_has_cannot_be_string"
-    "tests/test_connection.py::test_second_connection_not_update_default_connection"
-    "tests/test_connection.py::test_session_and_master_tokens"
-    "tests/test_connection.py::test_token_file_path_tokens"
-    "tests/test_docs_generation_output.py::test_flags_have_default_values" # snapshot
     "tests/test_config.py::test_too_wide_permissions_on_custom_config_file_causes_warning" # trying to chmod files inside read-only source or trying to get into a tmp dir
     "tests/test_config.py::test_no_error_when_init_from_non_default_config" # bad chmod in tmp
-    "tests/test_init.py::test_init_default_values"
-    "tests/test_init.py::test_rename_project"
-    "tests/test_init.py::test_variables_flags"
+    # Expects $HOME/.snowflake/connections.toml to already exist; doesn't in
+    # the build sandbox
+    "tests/test_connection.py::test_new_connection_with_jwt_auth"
   ];
 
   pythonRelaxDeps = true;
